@@ -1,10 +1,15 @@
 using UnityEngine;
 using UnityEditor;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace razz
 {
     public class PivotTool : EditorWindow
     {
+        private enum Mode { Manual, Selected }
+        private Mode currentMode = Mode.Manual;
+
         private GameObject targetObject = null;
         private Transform pivotTarget = null;
 
@@ -25,53 +30,77 @@ namespace razz
         {
             EditorGUILayout.HelpBox("This tool changes an object's pivot point without altering its position, rotation, or scale in the scene. Use bounding box or a new pivot transform. Pivot transform will also change pivot rotation.", MessageType.Info);
 
-            GUILayout.Space(10);
+            GUILayout.Space(5);
+            currentMode = (Mode)GUILayout.Toolbar((int)currentMode, new string[] { "Manual", "Selected" });
+            GUILayout.Space(5);
 
-            EditorGUILayout.LabelField("Target Object");
-            EditorGUILayout.BeginHorizontal();
-            targetObject = (GameObject)EditorGUILayout.ObjectField(targetObject, typeof(GameObject), true);
-
-            GUI.enabled = targetObject != null;
-            if (GUILayout.Button("Select", GUILayout.Width(60)))
+            if (currentMode == Mode.Manual)
             {
-                Selection.activeGameObject = targetObject;
-            }
-            GUI.enabled = true;
+                EditorGUILayout.LabelField("Target Object");
+                EditorGUILayout.BeginHorizontal();
+                targetObject = (GameObject)EditorGUILayout.ObjectField(targetObject, typeof(GameObject), true);
 
-            if (GUILayout.Button("Set Selected", GUILayout.Width(90)))
-            {
-                if (Selection.activeGameObject != null)
+                GUI.enabled = targetObject != null;
+                if (GUILayout.Button("Select", GUILayout.Width(60)))
                 {
-                    targetObject = Selection.activeGameObject;
+                    Selection.activeGameObject = targetObject;
+                }
+                GUI.enabled = true;
+
+                if (GUILayout.Button("Set Selected", GUILayout.Width(90)))
+                {
+                    if (Selection.activeGameObject != null && Selection.activeGameObject.scene.IsValid())
+                    {
+                        targetObject = Selection.activeGameObject;
+                    }
+                    else
+                    {
+                        targetObject = null;
+                        Debug.LogWarning("Please select an object in the scene.");
+                    }
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+            else
+            {
+                if (Selection.gameObjects.Length > 0)
+                {
+                    EditorGUILayout.HelpBox($"Operating on {GetTargets().Count} selected scene object(s).", MessageType.Info);
                 }
                 else
                 {
-                    Debug.LogWarning("No object selected in the scene.");
+                    EditorGUILayout.HelpBox("Select one or more objects in the scene to process.", MessageType.Warning);
                 }
             }
-            EditorGUILayout.EndHorizontal();
+
+            List<GameObject> currentTargets = GetTargets();
 
             GUILayout.Space(10);
             EditorGUILayout.LabelField("Mesh Utilities", EditorStyles.boldLabel);
 
-            GUI.enabled = targetObject != null;
+            GUI.enabled = currentTargets.Count > 0;
             if (GUILayout.Button("Reset Scale"))
             {
                 ApplyScaleToMesh();
             }
 
-            MeshFilter mf = targetObject ? targetObject.GetComponent<MeshFilter>() : null;
-            GUI.enabled = mf != null && mf.sharedMesh != null && !AssetDatabase.Contains(mf.sharedMesh);
+            List<GameObject> savableTargets = currentTargets.Where(go => {
+                MeshFilter mf = go.GetComponent<MeshFilter>();
+                return mf != null && mf.sharedMesh != null && !AssetDatabase.Contains(mf.sharedMesh);
+            }).ToList();
 
-            if (GUILayout.Button("Save Mesh as New"))
+            string saveButtonText = (savableTargets.Count > 1) ? "Save Meshes..." : "Save Mesh...";
+
+            GUI.enabled = savableTargets.Count > 0;
+            if (GUILayout.Button(saveButtonText))
             {
-                SaveMesh();
+                SaveMeshes();
             }
             GUI.enabled = true;
 
-            if (targetObject == null)
+            if (currentTargets.Count == 0 && currentMode == Mode.Manual)
             {
-                EditorGUILayout.HelpBox("Please assign a Target Object.", MessageType.Warning);
+                EditorGUILayout.HelpBox("Please assign a valid Target Object from the scene.", MessageType.Warning);
                 return;
             }
 
@@ -79,6 +108,7 @@ namespace razz
             EditorGUILayout.LabelField(new GUIContent("", "________________________________________________________________________________________________________________________________________________"), EditorStyles.boldLabel);
             GUILayout.Space(10);
 
+            GUI.enabled = currentTargets.Count > 0;
             EditorGUILayout.LabelField("Change Pivot:", EditorStyles.boldLabel);
 
             EditorGUILayout.LabelField("1. Use Bounding Box", EditorStyles.miniBoldLabel);
@@ -106,18 +136,14 @@ namespace razz
 
             if (GUILayout.Button("Set Selected", GUILayout.Width(90)))
             {
-                if (Selection.activeTransform != null && Selection.activeTransform.gameObject != targetObject)
+                if (Selection.activeTransform != null)
                 {
                     pivotTarget = Selection.activeTransform;
-                }
-                else
-                {
-                    Debug.LogWarning("Select a different object to be the pivot target.");
                 }
             }
             EditorGUILayout.EndHorizontal();
 
-            GUI.enabled = pivotTarget != null;
+            GUI.enabled = currentTargets.Count > 0 && pivotTarget != null;
             if (GUILayout.Button("Set Pivot from Transform", GUILayout.Height(40)))
             {
                 MovePivotToTarget();
@@ -125,17 +151,47 @@ namespace razz
             GUI.enabled = true;
         }
 
+        private List<GameObject> GetTargets()
+        {
+            if (currentMode == Mode.Manual)
+            {
+                if (targetObject != null && targetObject.scene.IsValid())
+                {
+                    return new List<GameObject> { targetObject };
+                }
+                return new List<GameObject>();
+            }
+            else
+            {
+                return Selection.gameObjects.Where(go => go != null && go.scene.IsValid()).ToList();
+            }
+        }
+
         private void ApplyScaleToMesh()
         {
-            if (targetObject == null) return;
-            MeshFilter meshFilter = targetObject.GetComponent<MeshFilter>();
+            List<GameObject> targets = GetTargets();
+            if (targets.Count == 0) return;
+
+            Undo.SetCurrentGroupName("Apply Scale to Meshes");
+            int group = Undo.GetCurrentGroup();
+
+            foreach (var go in targets)
+            {
+                ProcessApplyScaleToMesh(go);
+            }
+            Undo.CollapseUndoOperations(group);
+        }
+
+        private void ProcessApplyScaleToMesh(GameObject go)
+        {
+            MeshFilter meshFilter = go.GetComponent<MeshFilter>();
             if (meshFilter == null || meshFilter.sharedMesh == null)
             {
-                Debug.LogWarning($"No mesh found on {targetObject.name}");
+                Debug.LogWarning($"Skipping {go.name}: No MeshFilter or mesh found.", go);
                 return;
             }
 
-            Undo.RecordObject(targetObject.transform, "Apply Scale");
+            Undo.RecordObject(go.transform, "Apply Scale");
             Undo.RecordObject(meshFilter, "Apply Scale");
 
             Mesh originalMesh = meshFilter.sharedMesh;
@@ -143,7 +199,7 @@ namespace razz
             newMesh.name = $"{originalMesh.name}_scaled";
 
             Vector3[] vertices = newMesh.vertices;
-            Vector3 scale = targetObject.transform.localScale;
+            Vector3 scale = go.transform.localScale;
 
             for (int i = 0; i < vertices.Length; i++)
             {
@@ -157,39 +213,104 @@ namespace razz
             newMesh.RecalculateBounds();
 
             meshFilter.mesh = newMesh;
-            UpdateChildMeshColliders(targetObject, originalMesh, newMesh);
+            UpdateChildMeshColliders(go, originalMesh, newMesh);
 
-            targetObject.transform.localScale = Vector3.one;
-            Debug.Log($"Applied scale to {targetObject.name} and reset transform scale to one.", targetObject);
+            go.transform.localScale = Vector3.one;
+            Debug.Log($"Applied scale to {go.name} and reset transform scale to one.", go);
         }
 
-        private void SaveMesh()
+        private void SaveMeshes()
         {
-            MeshFilter meshFilter = targetObject.GetComponent<MeshFilter>();
-            if (meshFilter == null || meshFilter.sharedMesh == null) return;
-
-            string path = EditorUtility.SaveFilePanelInProject("Save New Mesh", $"{targetObject.name}_Mesh.asset", "asset", "Enter a file name for the new mesh.");
+            string path = EditorUtility.OpenFolderPanel("Save New Meshes In...", "Assets", "");
             if (string.IsNullOrEmpty(path)) return;
 
-            AssetDatabase.CreateAsset(meshFilter.sharedMesh, path);
+            if (!path.StartsWith(Application.dataPath))
+            {
+                Debug.LogError("The selected folder must be inside the project's Assets folder.");
+                return;
+            }
+            string relativePath = "Assets" + path.Substring(Application.dataPath.Length);
+
+            List<GameObject> targets = GetTargets();
+            if (targets.Count == 0) return;
+
+            Undo.SetCurrentGroupName("Save Meshes");
+            int group = Undo.GetCurrentGroup();
+
+            foreach (var go in targets)
+            {
+                ProcessSaveMesh(go, relativePath);
+            }
+            Undo.CollapseUndoOperations(group);
+
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log($"Mesh saved to: {path}", AssetDatabase.LoadAssetAtPath<Mesh>(path));
+        }
+
+        private void ProcessSaveMesh(GameObject go, string folderPath)
+        {
+            MeshFilter meshFilter = go.GetComponent<MeshFilter>();
+            if (meshFilter == null || meshFilter.sharedMesh == null || AssetDatabase.Contains(meshFilter.sharedMesh))
+            {
+                return;
+            }
+
+            Mesh meshToSave = meshFilter.sharedMesh;
+            string assetPath = AssetDatabase.GenerateUniqueAssetPath($"{folderPath}/{go.name}_Mesh.asset");
+
+            AssetDatabase.CreateAsset(meshToSave, assetPath);
+            Debug.Log($"Saved mesh for {go.name} to: {assetPath}", go);
+
+            Mesh savedAsset = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
+            if (savedAsset != null)
+            {
+                Undo.RecordObject(meshFilter, "Assign Saved Mesh");
+                meshFilter.sharedMesh = savedAsset;
+                UpdateChildMeshColliders(go, meshToSave, savedAsset);
+            }
         }
 
         private void MovePivotToTarget()
         {
-            if (targetObject == null || pivotTarget == null) return;
-            MovePivot(pivotTarget.position, pivotTarget.rotation);
+            List<GameObject> targets = GetTargets();
+            if (targets.Count == 0 || pivotTarget == null) return;
+
+            Undo.SetCurrentGroupName("Set Pivot from Transform");
+            int group = Undo.GetCurrentGroup();
+
+            foreach (var go in targets)
+            {
+                if (go == pivotTarget.gameObject)
+                {
+                    Debug.LogWarning($"Skipping {go.name} because it cannot be its own pivot target.", go);
+                    continue;
+                }
+                ProcessMovePivot(go, pivotTarget.position, pivotTarget.rotation);
+            }
+            Undo.CollapseUndoOperations(group);
         }
 
         private void MovePivotWithBBoxOffset()
         {
-            if (targetObject == null) return;
-            MeshFilter meshFilter = targetObject.GetComponent<MeshFilter>();
+            List<GameObject> targets = GetTargets();
+            if (targets.Count == 0) return;
+
+            Undo.SetCurrentGroupName("Set Pivot from Bounding Box");
+            int group = Undo.GetCurrentGroup();
+
+            foreach (var go in targets)
+            {
+                ProcessMovePivotWithBBoxOffset(go);
+            }
+            Undo.CollapseUndoOperations(group);
+        }
+
+        private void ProcessMovePivotWithBBoxOffset(GameObject go)
+        {
+            MeshFilter meshFilter = go.GetComponent<MeshFilter>();
             if (meshFilter == null || meshFilter.sharedMesh == null)
             {
-                Debug.LogWarning($"No mesh found on {targetObject.name}. Cannot use BBox method.");
+                Debug.LogWarning($"Skipping {go.name}: No MeshFilter or mesh found.", go);
                 return;
             }
 
@@ -203,31 +324,30 @@ namespace razz
             );
 
             Vector3 newPivotLocalPosition = bounds.center + localOffset;
-            Vector3 newPivotWorldPosition = targetObject.transform.TransformPoint(newPivotLocalPosition);
-
-            MovePivot(newPivotWorldPosition, targetObject.transform.rotation);
+            Vector3 newPivotWorldPosition = go.transform.TransformPoint(newPivotLocalPosition);
+            ProcessMovePivot(go, newPivotWorldPosition, go.transform.rotation);
         }
 
-        private void MovePivot(Vector3 newPivotWorldPosition, Quaternion newPivotWorldRotation)
+        private void ProcessMovePivot(GameObject go, Vector3 newPivotWorldPosition, Quaternion newPivotWorldRotation)
         {
-            MeshFilter meshFilter = targetObject.GetComponent<MeshFilter>();
+            MeshFilter meshFilter = go.GetComponent<MeshFilter>();
             if (meshFilter == null || meshFilter.sharedMesh == null)
             {
-                Debug.LogWarning($"No mesh found on {targetObject.name}");
+                Debug.LogWarning($"Skipping {go.name}: No MeshFilter or mesh found for pivot operation.", go);
                 return;
             }
 
-            Undo.RecordObject(targetObject.transform, "Move Pivot");
+            Undo.RecordObject(go.transform, "Move Pivot");
             Undo.RecordObject(meshFilter, "Move Pivot");
 
             Mesh originalMesh = meshFilter.sharedMesh;
             Mesh newMesh = Instantiate(originalMesh);
             newMesh.name = $"{originalMesh.name}_pivoted";
 
-            Vector3 originalLocalScale = targetObject.transform.localScale;
-            Vector3 originalLossyScale = targetObject.transform.lossyScale;
+            Vector3 originalLocalScale = go.transform.localScale;
+            Vector3 originalLossyScale = go.transform.lossyScale;
 
-            Matrix4x4 oldPivotMatrix = targetObject.transform.localToWorldMatrix;
+            Matrix4x4 oldPivotMatrix = go.transform.localToWorldMatrix;
             Matrix4x4 newPivotMatrix = Matrix4x4.TRS(newPivotWorldPosition, newPivotWorldRotation, originalLossyScale);
             Matrix4x4 meshTransformMatrix = newPivotMatrix.inverse * oldPivotMatrix;
 
@@ -250,13 +370,13 @@ namespace razz
             newMesh.RecalculateBounds();
 
             meshFilter.mesh = newMesh;
-            UpdateChildMeshColliders(targetObject, originalMesh, newMesh);
+            UpdateChildMeshColliders(go, originalMesh, newMesh);
 
-            targetObject.transform.position = newPivotWorldPosition;
-            targetObject.transform.rotation = newPivotWorldRotation;
-            targetObject.transform.localScale = originalLocalScale;
+            go.transform.position = newPivotWorldPosition;
+            go.transform.rotation = newPivotWorldRotation;
+            go.transform.localScale = originalLocalScale;
 
-            Debug.Log($"Pivot for {targetObject.name} has been successfully changed.", targetObject);
+            Debug.Log($"Pivot for {go.name} has been successfully changed.", go);
         }
 
         private void UpdateChildMeshColliders(GameObject root, Mesh originalMesh, Mesh newMesh)
@@ -277,7 +397,7 @@ namespace razz
 
             if (updatedCount > 0)
             {
-                Debug.Log($"Updated {updatedCount} MeshCollider(s) to use the new mesh.", root);
+                Debug.Log($"Updated {updatedCount} MeshCollider(s) in {root.name} to use the new mesh.", root);
             }
         }
     }
