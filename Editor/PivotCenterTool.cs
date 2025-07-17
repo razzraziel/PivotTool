@@ -138,8 +138,9 @@ namespace razz
             Undo.RecordObject(targetObject.transform, "Apply Scale");
             Undo.RecordObject(meshFilter, "Apply Scale");
 
-            Mesh newMesh = Instantiate(meshFilter.sharedMesh);
-            newMesh.name = $"{meshFilter.sharedMesh.name}_scaled";
+            Mesh originalMesh = meshFilter.sharedMesh;
+            Mesh newMesh = Instantiate(originalMesh);
+            newMesh.name = $"{originalMesh.name}_scaled";
 
             Vector3[] vertices = newMesh.vertices;
             Vector3 scale = targetObject.transform.localScale;
@@ -156,6 +157,8 @@ namespace razz
             newMesh.RecalculateBounds();
 
             meshFilter.mesh = newMesh;
+            UpdateChildMeshColliders(targetObject, originalMesh, newMesh);
+
             targetObject.transform.localScale = Vector3.one;
             Debug.Log($"Applied scale to {targetObject.name} and reset transform scale to one.", targetObject);
         }
@@ -217,8 +220,9 @@ namespace razz
             Undo.RecordObject(targetObject.transform, "Move Pivot");
             Undo.RecordObject(meshFilter, "Move Pivot");
 
-            Mesh newMesh = Instantiate(meshFilter.sharedMesh);
-            newMesh.name = $"{meshFilter.sharedMesh.name}_pivoted";
+            Mesh originalMesh = meshFilter.sharedMesh;
+            Mesh newMesh = Instantiate(originalMesh);
+            newMesh.name = $"{originalMesh.name}_pivoted";
 
             Vector3 originalLocalScale = targetObject.transform.localScale;
             Vector3 originalLossyScale = targetObject.transform.lossyScale;
@@ -246,12 +250,35 @@ namespace razz
             newMesh.RecalculateBounds();
 
             meshFilter.mesh = newMesh;
+            UpdateChildMeshColliders(targetObject, originalMesh, newMesh);
 
             targetObject.transform.position = newPivotWorldPosition;
             targetObject.transform.rotation = newPivotWorldRotation;
             targetObject.transform.localScale = originalLocalScale;
 
             Debug.Log($"Pivot for {targetObject.name} has been successfully changed.", targetObject);
+        }
+
+        private void UpdateChildMeshColliders(GameObject root, Mesh originalMesh, Mesh newMesh)
+        {
+            if (originalMesh == null || newMesh == null) return;
+
+            MeshCollider[] colliders = root.GetComponentsInChildren<MeshCollider>(true);
+            int updatedCount = 0;
+            foreach (MeshCollider collider in colliders)
+            {
+                if (collider.sharedMesh == originalMesh)
+                {
+                    Undo.RecordObject(collider, "Update Mesh Collider");
+                    collider.sharedMesh = newMesh;
+                    updatedCount++;
+                }
+            }
+
+            if (updatedCount > 0)
+            {
+                Debug.Log($"Updated {updatedCount} MeshCollider(s) to use the new mesh.", root);
+            }
         }
     }
 }
