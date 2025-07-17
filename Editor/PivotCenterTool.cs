@@ -220,10 +220,11 @@ namespace razz
             Mesh newMesh = Instantiate(meshFilter.sharedMesh);
             newMesh.name = $"{meshFilter.sharedMesh.name}_pivoted";
 
-            Vector3 originalScale = targetObject.transform.localScale;
+            Vector3 originalLocalScale = targetObject.transform.localScale;
+            Vector3 originalLossyScale = targetObject.transform.lossyScale;
 
             Matrix4x4 oldPivotMatrix = targetObject.transform.localToWorldMatrix;
-            Matrix4x4 newPivotMatrix = Matrix4x4.TRS(newPivotWorldPosition, newPivotWorldRotation, originalScale);
+            Matrix4x4 newPivotMatrix = Matrix4x4.TRS(newPivotWorldPosition, newPivotWorldRotation, originalLossyScale);
             Matrix4x4 meshTransformMatrix = newPivotMatrix.inverse * oldPivotMatrix;
 
             Vector3[] vertices = newMesh.vertices;
@@ -248,7 +249,7 @@ namespace razz
 
             targetObject.transform.position = newPivotWorldPosition;
             targetObject.transform.rotation = newPivotWorldRotation;
-            targetObject.transform.localScale = originalScale;
+            targetObject.transform.localScale = originalLocalScale;
 
             Debug.Log($"Pivot for {targetObject.name} has been successfully changed.", targetObject);
         }
