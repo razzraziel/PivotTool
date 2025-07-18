@@ -146,15 +146,29 @@ namespace razz
             Mesh originalMesh = mf.sharedMesh;
             Mesh newMesh = Instantiate(originalMesh);
             newMesh.name = $"{originalMesh.name}_scaled";
+
             Vector3[] vertices = newMesh.vertices;
-            Vector3 scale = go.transform.localScale;
-            for (int i = 0; i < vertices.Length; i++) { vertices[i].x *= scale.x; vertices[i].y *= scale.y; vertices[i].z *= scale.z; }
+            Vector3 scaleToBake = go.transform.lossyScale;
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                vertices[i].x *= scaleToBake.x;
+                vertices[i].y *= scaleToBake.y;
+                vertices[i].z *= scaleToBake.z;
+            }
+
             newMesh.vertices = vertices;
-            newMesh.RecalculateNormals(); newMesh.RecalculateTangents(); newMesh.RecalculateBounds();
+            newMesh.RecalculateNormals();
+            newMesh.RecalculateTangents();
+            newMesh.RecalculateBounds();
+
             mf.mesh = newMesh;
             UpdateChildMeshColliders(go, originalMesh, newMesh);
-            go.transform.localScale = Vector3.one;
-            Debug.Log($"Applied scale to {go.name}.", go);
+
+            Vector3 parentWorldScale = (go.transform.parent != null) ? go.transform.parent.lossyScale : Vector3.one;
+            go.transform.localScale = new Vector3(1f / parentWorldScale.x, 1f / parentWorldScale.y, 1f / parentWorldScale.z);
+
+            Debug.Log($"Applied global scale to {go.name}.", go);
         }
 
         private void ResetRotation()
@@ -195,7 +209,7 @@ namespace razz
             UpdateChildMeshColliders(go, originalMesh, newMesh);
 
             go.transform.rotation = Quaternion.identity;
-            Debug.Log($"Reset rotation for {go.name}.", go);
+            Debug.Log($"Applied global rotation to {go.name}.", go);
         }
 
         private void SaveMeshes()
@@ -258,7 +272,7 @@ namespace razz
             MeshFilter mf = go.GetComponent<MeshFilter>();
             if (mf == null || mf.sharedMesh == null) { Debug.LogWarning($"Skipping {go.name}: No MeshFilter/mesh.", go); return; }
             Bounds bounds = mf.sharedMesh.bounds;
-            Vector3 newPivotWorldPosition = go.transform.TransformPoint(bounds.center + new Vector3(bounds.size.x * (xOffset / 100f), bounds.size.y * (yOffset / 100f), bounds.size.z * (zOffset / 100f)));
+            Vector3 newPivotWorldPosition = go.transform.TransformPoint(bounds.center + new Vector3(bounds.size.x * (xOffset / 200f), bounds.size.y * (yOffset / 200f), bounds.size.z * (zOffset / 200f)));
             ProcessMovePivot(go, newPivotWorldPosition, go.transform.rotation);
         }
 
@@ -282,7 +296,7 @@ namespace razz
             mf.mesh = newMesh;
             UpdateChildMeshColliders(go, originalMesh, newMesh);
             go.transform.SetPositionAndRotation(newPivotWorldPosition, newPivotWorldRotation);
-            Debug.Log($"Pivot for {go.name} has been changed.", go);
+            Debug.Log($"Applied pivot change to {go.name}.", go);
         }
 
         private void UpdateChildMeshColliders(GameObject root, Mesh originalMesh, Mesh newMesh)
